@@ -1,0 +1,180 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local camera = workspace.CurrentCamera
+
+local localPlayer = Players.LocalPlayer
+
+local gui = Instance.new("ScreenGui")
+gui.ResetOnSpawn = false
+gui.Parent = localPlayer:WaitForChild("PlayerGui")
+
+task.spawn(function()
+    local introText = "Camlock v5.3 | By Schmeckt (PAID PC VERSION)..."
+    
+    local introLabel = Instance.new("TextLabel", gui)
+    introLabel.Size = UDim2.new(0, 500, 0, 50)
+    introLabel.Position = UDim2.new(0.5, -250, 1, 0)
+    introLabel.BackgroundTransparency = 1
+    introLabel.Font = Enum.Font.GothamBold
+    introLabel.TextSize = 24
+    introLabel.TextColor3 = Color3.new(1, 1, 1)
+    introLabel.Text = ""
+    
+    local stroke = Instance.new("UIStroke", introLabel)
+    stroke.Color = Color3.new(0,0,0)
+    stroke.Thickness = 1.5
+
+    local introSound = Instance.new("Sound", introLabel)
+    introSound.SoundId = "rbxassetid://5106954314"
+    introSound.Volume = 0.5
+    
+    local tweenInfoIn = TweenInfo.new(0.7, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    local goalIn = { Position = UDim2.new(0.5, -250, 0.4, 0) }
+    local tweenIn = TweenService:Create(introLabel, tweenInfoIn, goalIn)
+    
+    tweenIn:Play()
+    introSound:Play()
+    tweenIn.Completed:Wait()
+    
+    for i = 1, #introText do
+        introLabel.Text = string.sub(introText, 1, i)
+        task.wait(0.05)
+    end
+    
+    task.wait(3)
+    
+    local tweenInfoOut = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+    local goalOut = { Position = UDim2.new(0.5, -250, -0.2, 0) }
+    local tweenOut = TweenService:Create(introLabel, tweenInfoOut, goalOut)
+    
+    tweenOut:Play()
+    tweenOut.Completed:Wait()
+    introLabel:Destroy()
+end)
+
+
+
+local fovRadius = 1200
+local smoothness = 0.18   -- 0.1 = schneller, 0.3 = smoother
+local maxPrediction = 0.2 -- maximale Prediction in Sekunden
+
+local isAiming = false
+local targetCharacter = nil
+
+
+local mainGui = Instance.new("ScreenGui", localPlayer:WaitForChild("PlayerGui"))
+mainGui.ResetOnSpawn = false
+
+local statusLabel = Instance.new("TextLabel", mainGui)
+statusLabel.Size = UDim2.new(0, 180, 0, 40)
+statusLabel.Position = UDim2.new(0.02, 0, 0.5, -20)
+statusLabel.BackgroundColor3 = Color3.new(0, 0, 0)
+statusLabel.BackgroundTransparency = 0.3
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.TextSize = 18
+statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+statusLabel.Text = "Lock: OFF"
+Instance.new("UICorner", statusLabel).CornerRadius = UDim.new(0, 8)
+
+local function updateGui()
+	statusLabel.Text = isAiming and "Lock: ON" or "Lock: OFF"
+	statusLabel.TextColor3 = isAiming and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 80, 80)
+end
+
+-- Ziel finden
+local function getClosestTarget()
+	local closestTarget = nil
+	local shortestDistance = fovRadius
+
+	for _, plr in pairs(Players:GetPlayers()) do
+		if plr ~= localPlayer and plr.Character and plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health > 0 then
+			local head = plr.Character:FindFirstChild("Head")
+			if head then
+				local screenPos, onScreen = camera:WorldToViewportPoint(head.Position)
+				if onScreen then
+					local dist = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(camera.ViewportSize.X/2, camera.ViewportSize.Y/2)).Magnitude
+					if dist < shortestDistance then
+						shortestDistance = dist
+						closestTarget = plr.Character
+					end
+				end
+			end
+		end
+	end
+
+	return closestTarget
+end
+
+
+local function getAverageHitboxPosition(char)
+	local parts = {}
+	for _, partName in ipairs({"Head", "UpperTorso", "HumanoidRootPart"}) do
+		local part = char:FindFirstChild(partName)
+		if part then
+			table.insert(parts, part.Position)
+		end
+	end
+
+	if #parts == 0 then return nil end
+
+	local sum = Vector3.new(0,0,0)
+	for _, pos in ipairs(parts) do
+		sum += pos
+	end
+	return sum / #parts
+end
+
+
+local function getPredictedPosition(char)
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return nil end
+
+	local avgPos = getAverageHitboxPosition(char)
+	if not avgPos then return nil end
+
+	local velocity = hrp.Velocity
+	local speed = velocity.Magnitude
+
+	local dynamicPrediction = math.clamp(speed / 50, 0, maxPrediction)
+	return avgPos + (velocity * dynamicPrediction)
+end
+
+
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.Q then
+		if isAiming then
+			isAiming = false
+			targetCharacter = nil
+		else
+			local target = getClosestTarget()
+			if target then
+				isAiming = true
+				targetCharacter = target
+			end
+		end
+		updateGui()
+	end
+end)
+
+
+RunService.RenderStepped:Connect(function()
+	if isAiming and targetCharacter and targetCharacter:FindFirstChild("Humanoid") and targetCharacter.Humanoid.Health > 0 then
+		local predictedPos = getPredictedPosition(targetCharacter)
+		if predictedPos then
+			local currentCF = camera.CFrame
+			local targetCF = CFrame.new(currentCF.Position, predictedPos)
+			camera.CFrame = currentCF:Lerp(targetCF, smoothness)
+		end
+	else
+		if isAiming then
+			isAiming = false
+			targetCharacter = nil
+			updateGui()
+		end
+	end
+end)
+
+updateGui()
